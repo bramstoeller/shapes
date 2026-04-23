@@ -182,12 +182,12 @@ void benchmark() {
   constexpr int kShapes = 2000;
   constexpr int kOps = 2000;
 
-  auto canvas = std::make_unique<CompoundShape>(0.0f, 0.0f);
+  CompoundShape canvas(0.0f, 0.0f);
   for (int i = 0; i < kShapes; ++i) {
     if (i % 2 == 0) {
-      canvas->place(std::make_unique<Circle>(float(i), float(i), 0.5f));
+      canvas.place(std::make_unique<Circle>(float(i), float(i), 0.5f));
     } else {
-      canvas->place(std::make_unique<Rectangle>(float(i), float(i), 2.0f, 1.0f));
+      canvas.place(std::make_unique<Rectangle>(float(i), float(i), 2.0f, 1.0f));
     }
   }
 
@@ -196,23 +196,23 @@ void benchmark() {
   for (int i = 0; i < kOps; ++i) {
     switch (i % 3) {
       case 0:
-        canvas->move(0.1f, 0.1f);
+        canvas.move(0.1f, 0.1f);
         break;
       case 1:
-        canvas->scale(1.001f);
+        canvas.scale(1.001f);
         break;
       case 2:
-        canvas->rotate(0.001f);
+        canvas.rotate(0.001f);
         break;
     }
   }
   auto t1 = clk::now();
   for (int i = 0; i < kOps; ++i) {
-    canvas->undo();
+    canvas.undo();
   }
   auto t2 = clk::now();
   for (int i = 0; i < kOps; ++i) {
-    canvas->redo();
+    canvas.redo();
   }
   auto t3 = clk::now();
 
@@ -221,28 +221,28 @@ void benchmark() {
 }
 
 int main() {
-  auto canvas = std::make_unique<CompoundShape>(0.0f, 0.0f);
-  canvas->place(std::make_unique<Circle>(1.0f, 0.0f, 0.5f));
-  canvas->place(std::make_unique<Rectangle>(-1.0f, 0.0f, 2.0f, 1.0f));
+  CompoundShape canvas(0.0f, 0.0f);
+  canvas.place(std::make_unique<Circle>(1.0f, 0.0f, 0.5f));
+  canvas.place(std::make_unique<Rectangle>(-1.0f, 0.0f, 2.0f, 1.0f));
 
   auto compound = std::make_unique<CompoundShape>(5.0f, 5.0f);
   compound->place(std::make_unique<Circle>(-1.0f, 0.0f, 1.0f));
   compound->place(std::make_unique<Rectangle>(1.0f, 0.0f, 2.0f, 1.0f));
-  canvas->place(std::move(compound));
+  canvas.place(std::move(compound));
 
-  std::cout << "Initial:\n" << *canvas;
-  canvas->move(10.0f, 10.0f);
-  std::cout << "\nAfter move(10,10):\n" << *canvas;
-  canvas->scale(2.0f);
-  std::cout << "\nAfter scale(2):\n" << *canvas;
-  canvas->rotate(kPi / 2.0f);
-  std::cout << "\nAfter rotate(90 deg):\n" << *canvas;
-  canvas->undo();
-  std::cout << "\nAfter undo:\n" << *canvas;
-  canvas->undo();
-  std::cout << "\nAfter undo:\n" << *canvas;
-  canvas->redo();
-  std::cout << "\nAfter redo():\n" << *canvas;
+  std::cout << "Initial:\n" << canvas;
+  canvas.move(10.0f, 10.0f);
+  std::cout << "\nAfter move(10,10):\n" << canvas;
+  canvas.scale(2.0f);
+  std::cout << "\nAfter scale(2):\n" << canvas;
+  canvas.rotate(kPi / 2.0f);
+  std::cout << "\nAfter rotate(90 deg):\n" << canvas;
+  canvas.undo();
+  std::cout << "\nAfter undo:\n" << canvas;
+  canvas.undo();
+  std::cout << "\nAfter undo:\n" << canvas;
+  canvas.redo();
+  std::cout << "\nAfter redo():\n" << canvas;
 
   std::cout << "\n";
   benchmark();
