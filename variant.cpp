@@ -63,26 +63,26 @@ void scale(std::unique_ptr<Compound>& p, float factor) {
 }
 
 // Rotate
-// Delta form keeps sub-ULP cancellation exact: a 90° rotation of an axis-aligned
-// point yields exactly 0 on the cancelled axis instead of ~1e-8 noise.
-void rotate_xy(float& x, float& y, float co, float si) {
+void rotate_xy(float& x, float& y, float angle) {
+  const float co = std::cos(angle);
+  const float si = std::sin(angle);
   const float nx = x * co - y * si;
   const float ny = x * si + y * co;
-  x += nx - x;
-  y += ny - y;
+  x = nx;
+  y = ny;
 }
 
-void rotate(Circle& c, float /*angle*/, float co, float si) { rotate_xy(c.x, c.y, co, si); }
+void rotate(Circle& c, float angle) { rotate_xy(c.x, c.y, angle); }
 
-void rotate(Rectangle& r, float angle, float co, float si) {
-  rotate_xy(r.x, r.y, co, si);
+void rotate(Rectangle& r, float angle) {
+  rotate_xy(r.x, r.y, angle);
   r.orientation += angle;
 }
 
-void rotate(std::unique_ptr<Compound>& p, float angle, float co, float si) {
-  rotate_xy(p->x, p->y, co, si);
+void rotate(std::unique_ptr<Compound>& p, float angle) {
+  rotate_xy(p->x, p->y, angle);
   for (auto& child : p->children) {
-    std::visit([=](auto& n) { rotate(n, angle, co, si); }, child);
+    std::visit([angle](auto& n) { rotate(n, angle); }, child);
   }
 }
 
@@ -166,10 +166,8 @@ class Canvas {
     }
   }
   void do_apply(const Rotate& r) {
-    const float co = std::cos(r.angle);
-    const float si = std::sin(r.angle);
     for (auto& child : root_.children) {
-      std::visit([=](auto& n) { rotate(n, r.angle, co, si); }, child);
+      std::visit([angle = r.angle](auto& n) { rotate(n, angle); }, child);
     }
   }
 
