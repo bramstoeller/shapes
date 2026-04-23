@@ -12,11 +12,11 @@ Three takes on a shape hierarchy with undo/redo:
 
 | variant  | apply (ms) | undo (ms) | redo (ms) |
 |----------|-----------:|----------:|----------:|
-| classic  |       ~60  |      ~21  |      ~30  |
-| closures |      ~300  |      ~75  |     ~150  |
-| modern   |        ~7  |       ~6  |       ~8  |
+| classic  |       ~95  |      ~53  |      ~54  |
+| closures |      ~400  |      ~89  |     ~212  |
+| modern   |        ~9  |       ~9  |      ~10  |
 
-Modern wins by roughly 10x over classic and 40x over closures: with `variant` the visit calls inline at `-O3`, classic pays vtable indirection, and closures add `std::function` indirection plus heap-allocated captures.
+Modern wins by roughly 10x over classic and 45x over closures: with `variant` the visit calls inline at `-O3`, classic pays vtable indirection on every `do_move`/`do_scale`/`do_rotate` hook, and closures add `std::function` indirection plus heap-allocated captures.
 
 ## Build & run
 
