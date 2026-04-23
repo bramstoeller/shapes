@@ -1,3 +1,5 @@
+// Using std::variant is ~20x faster than the classic OOP method and ~80x faster than the std::function method.
+
 #include <chrono>
 #include <cmath>
 #include <iostream>
