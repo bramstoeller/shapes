@@ -1,12 +1,12 @@
 # Benchmark
 
-2000 shapes, 2000 mixed apply + 2000 undo + 2000 redo. Built with `-O3`. 10-run medians.
+1000 shapes, 10000 mixed apply + 10000 undo + 10000 redo. Built with `-O3`.
 
-| implementation | apply (ms) | undo (ms) | redo (ms) |
+| implementation | apply (us) | undo (us) | redo (us) |
 |----------------|-----------:|----------:|----------:|
-| classic        |        ~51 |       ~19 |       ~25 |
-| closures       |       ~209 |       ~61 |      ~102 |
-| variant        |       ~2.5 |      ~2.4 |      ~2.8 |
+| classic        |       ~547 |       ~42 |       ~42 |
+| closures       |      ~1022 |       ~42 |       ~42 |
+| variant        |       ~178 |       ~18 |       ~18 |
 
-Variant is ~20x faster than classic and ~80x faster than closures on apply (8–10x and 25–35x on undo/redo).
+Variant is ~3x faster than classic and ~6x faster than closures on apply (~2x on undo/redo).
 

@@ -1,16 +1,22 @@
-// Using std::variant is ~20x faster than the classic OOP method and ~80x faster than the std::function method.
+// Less readable than the OOP versions, but included to show that std::variant is ~3x faster than classic
+// and ~6x faster than closures on apply (~2x on undo/redo).
 
 #include <chrono>
 #include <cmath>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
+constexpr float kPi = 3.14159265358979323846f;
+
 // Shapes
 struct Shape {
-  float x, y;
+  // Using public members for simplicity
+  float x;
+  float y;
 };
 
 struct Circle : Shape {
@@ -18,15 +24,120 @@ struct Circle : Shape {
 };
 
 struct Rectangle : Shape {
-  float width, height, orientation = 0.0f;
+  float width;
+  float height;
+  float orientation = 0.0f;
 };
 
 struct Compound;
 using Node = std::variant<Circle, Rectangle, std::unique_ptr<Compound>>;
 
 struct Compound : Shape {
-  std::vector<Node> children;
+  std::vector<Node> shapes;
+
+  Compound(float x, float y) : Shape{x, y} {}
+
+  Node* place(Node node) {
+    shapes.push_back(std::move(node));
+    return &shapes.back();
+  }
 };
+
+// Access x/y on a Node uniformly via the Shape base
+inline Shape& as_shape(Circle& c) { return c; }
+inline Shape& as_shape(Rectangle& r) { return r; }
+inline Shape& as_shape(std::unique_ptr<Compound>& p) { return *p; }
+inline Shape& as_shape(Node& n) {
+  return std::visit([](auto& s) -> Shape& { return as_shape(s); }, n);
+}
+
+// move
+inline void move(Shape& s, float dx, float dy) {
+  s.x += dx;
+  s.y += dy;
+}
+inline void move(std::unique_ptr<Compound>& p, float dx, float dy) { move(*p, dx, dy); }
+inline void move(Node& n, float dx, float dy) {
+  std::visit([dx, dy](auto& s) { move(s, dx, dy); }, n);
+}
+
+// scale
+inline void scale(Circle& c, float factor) { c.radius *= factor; }
+inline void scale(Rectangle& r, float factor) {
+  r.width *= factor;
+  r.height *= factor;
+}
+inline void scale(Node& n, float factor);
+inline void scale(Compound& cp, float factor) {
+  // Move and scale child shapes
+  for (auto& shape : cp.shapes) {
+    Shape& s = as_shape(shape);
+    const float dx = s.x * (factor - 1.0f);
+    const float dy = s.y * (factor - 1.0f);
+    move(shape, dx, dy);
+    scale(shape, factor);
+  }
+}
+inline void scale(std::unique_ptr<Compound>& p, float factor) { scale(*p, factor); }
+inline void scale(Node& n, float factor) {
+  std::visit([factor](auto& s) { scale(s, factor); }, n);
+}
+
+// rotate
+inline void rotate(Circle&, float) {
+  // noop
+}
+inline void rotate(Rectangle& r, float rotation) {
+  // Range is [-pi, pi]
+  r.orientation = std::remainder(r.orientation + rotation, 2.0f * kPi);
+}
+inline void rotate(Node& n, float rotation);
+inline void rotate(Compound& cp, float rotation) {
+  // Move and rotate child shapes
+  const float c = std::cos(rotation);
+  const float s = std::sin(rotation);
+  for (auto& shape : cp.shapes) {
+    Shape& sh = as_shape(shape);
+    const float rx = sh.x;
+    const float ry = sh.y;
+    const float nx = rx * c - ry * s;
+    const float ny = rx * s + ry * c;
+    move(shape, nx - rx, ny - ry);
+    rotate(shape, rotation);
+  }
+}
+inline void rotate(std::unique_ptr<Compound>& p, float rotation) { rotate(*p, rotation); }
+inline void rotate(Node& n, float rotation) {
+  std::visit([rotation](auto& s) { rotate(s, rotation); }, n);
+}
+
+// print
+inline void print(std::ostream& os, const Circle& c, const std::string& indent) {
+  os << indent << "Circle(x=" << c.x << ", y=" << c.y << ", radius=" << c.radius << ")\n";
+}
+inline void print(std::ostream& os, const Rectangle& r, const std::string& indent) {
+  os << indent << "Rectangle(x=" << r.x << ", y=" << r.y << ", width=" << r.width << ", height=" << r.height
+     << ", orientation=" << r.orientation << ")\n";
+}
+inline void print(std::ostream& os, const Node& n, const std::string& indent);
+inline void print(std::ostream& os, const Compound& cp, const std::string& indent) {
+  os << indent << "CompoundShape(x=" << cp.x << ", y=" << cp.y << ") {\n";
+  for (const auto& shape : cp.shapes) {
+    print(os, shape, indent + "  ");
+  }
+  os << indent << "}\n";
+}
+inline void print(std::ostream& os, const std::unique_ptr<Compound>& p, const std::string& indent) {
+  print(os, *p, indent);
+}
+inline void print(std::ostream& os, const Node& n, const std::string& indent) {
+  std::visit([&](const auto& s) { print(os, s, indent); }, n);
+}
+
+inline std::ostream& operator<<(std::ostream& os, const Node& n) {
+  print(os, n, "");
+  return os;
+}
 
 // Transformations
 struct Move {
@@ -36,171 +147,115 @@ struct Scale {
   float factor;
 };
 struct Rotate {
-  float angle;
+  float angle_rad;
 };
 using Operation = std::variant<Move, Scale, Rotate>;
 
-// Scale
-void scale(Circle& c, float factor) {
-  c.x *= factor;
-  c.y *= factor;
-  c.radius *= factor;
+inline void apply(const Move& m, Node& n) { move(n, m.dx, m.dy); }
+inline void apply(const Scale& s, Node& n) { scale(n, s.factor); }
+inline void apply(const Rotate& r, Node& n) { rotate(n, r.angle_rad); }
+inline void apply(const Operation& op, Node& n) {
+  std::visit([&n](const auto& o) { ::apply(o, n); }, op);
 }
 
-void scale(Rectangle& r, float factor) {
-  r.x *= factor;
-  r.y *= factor;
-  r.width *= factor;
-  r.height *= factor;
+inline void revert(const Move& m, Node& n) { move(n, -m.dx, -m.dy); }
+inline void revert(const Scale& s, Node& n) { scale(n, 1.0f / s.factor); }
+inline void revert(const Rotate& r, Node& n) { rotate(n, -r.angle_rad); }
+inline void revert(const Operation& op, Node& n) {
+  std::visit([&n](const auto& o) { revert(o, n); }, op);
 }
 
-void scale(std::unique_ptr<Compound>& p, float factor) {
-  p->x *= factor;
-  p->y *= factor;
-  for (auto& child : p->children) {
-    std::visit([factor](auto& n) { scale(n, factor); }, child);
-  }
-}
-
-// Rotate
-void rotate_xy(float& x, float& y, float angle) {
-  const float co = std::cos(angle);
-  const float si = std::sin(angle);
-  const float nx = x * co - y * si;
-  const float ny = x * si + y * co;
-  x = nx;
-  y = ny;
-}
-
-void rotate(Circle& c, float angle) { rotate_xy(c.x, c.y, angle); }
-
-void rotate(Rectangle& r, float angle) {
-  rotate_xy(r.x, r.y, angle);
-  r.orientation += angle;
-}
-
-void rotate(std::unique_ptr<Compound>& p, float angle) {
-  rotate_xy(p->x, p->y, angle);
-  for (auto& child : p->children) {
-    std::visit([angle](auto& n) { rotate(n, angle); }, child);
-  }
-}
-
-// Inverse operations
-Operation inverse(const Move& m) { return Move{-m.dx, -m.dy}; }
-Operation inverse(const Scale& s) { return Scale{1.0f / s.factor}; }
-Operation inverse(const Rotate& r) { return Rotate{-r.angle}; }
-Operation inverse(const Operation& op) {
-  return std::visit([](const auto& o) -> Operation { return inverse(o); }, op);
-}
-
-// Printing
-void print(std::ostream& os, const Circle& c, const std::string& indent, float ox, float oy) {
-  os << indent << "Circle(x=" << ox + c.x << ", y=" << oy + c.y << ", radius=" << c.radius << ")\n";
-}
-void print(std::ostream& os, const Rectangle& r, const std::string& indent, float ox, float oy) {
-  os << indent << "Rectangle(x=" << ox + r.x << ", y=" << oy + r.y << ", width=" << r.width << ", height=" << r.height
-     << ", orientation=" << r.orientation << ")\n";
-}
-void print(std::ostream& os, const Compound& cp, const std::string& indent, float ox, float oy);
-void print(std::ostream& os, const std::unique_ptr<Compound>& p, const std::string& indent, float ox, float oy) {
-  print(os, *p, indent, ox, oy);
-}
-void print(std::ostream& os, const Node& node, const std::string& indent, float ox, float oy) {
-  std::visit([&](const auto& n) { print(os, n, indent, ox, oy); }, node);
-}
-void print(std::ostream& os, const Compound& cp, const std::string& indent, float ox, float oy) {
-  const float ax = ox + cp.x;
-  const float ay = oy + cp.y;
-  os << indent << "CompoundShape(x=" << ax << ", y=" << ay << ") {\n";
-  for (const auto& child : cp.children) {
-    print(os, child, indent + "  ", ax, ay);
-  }
-  os << indent << "}\n";
-}
-
+// Canvas
 class Canvas {
- public:
-  explicit Canvas(float x = 0.0f, float y = 0.0f) : root_{x, y, {}} {}
 
-  void place(Node node) { root_.children.push_back(std::move(node)); }
+  using History = std::vector<std::pair<Node*, Operation>>;
 
-  void apply(Operation op) {
-    std::visit([this](const auto& o) { do_apply(o); }, op);
-    ops_.resize(cursor_);
-    ops_.push_back(op);
-    ++cursor_;
+  // The canvas owns the shapes
+  std::vector<std::unique_ptr<Node>> shapes_;
+
+  History history_;
+  History::iterator cursor_;
+
+public:
+  Canvas() : cursor_(history_.end()) {}
+
+  Node& place(Node node) {
+    shapes_.push_back(std::make_unique<Node>(std::move(node)));
+    return *shapes_.back();
   }
 
-  bool undo() {
-    if (cursor_ == 0) {
-      return false;
-    }
+  void move(Node& shape, float dx, float dy) {
+    ::move(shape, dx, dy);
+    remember(shape, Move{dx, dy});
+  }
+
+  void scale(Node& shape, float factor) {
+    ::scale(shape, factor);
+    remember(shape, Scale{factor});
+  }
+
+  void rotate(Node& shape, float angle_rad) {
+    ::rotate(shape, angle_rad);
+    remember(shape, Rotate{angle_rad});
+  }
+
+  void undo() {
+    if (cursor_ == history_.begin()) return;
     --cursor_;
-    std::visit([this](const auto& o) { do_apply(o); }, inverse(ops_[cursor_]));
-    return true;
+    auto& [shape, op] = *cursor_;
+    ::revert(op, *shape);
   }
 
-  bool redo() {
-    if (cursor_ >= ops_.size()) {
-      return false;
-    }
-    std::visit([this](const auto& o) { do_apply(o); }, ops_[cursor_]);
+  void redo() {
+    if (cursor_ == history_.end()) return;
+    auto& [shape, op] = *cursor_;
+    ::apply(op, *shape);
     ++cursor_;
-    return true;
   }
 
   friend std::ostream& operator<<(std::ostream& os, const Canvas& c) {
-    print(os, c.root_, "", 0.0f, 0.0f);
+    for (const auto& shape : c.shapes_) {
+      os << *shape;
+    }
     return os;
   }
 
- private:
-  void do_apply(const Move& m) {
-    root_.x += m.dx;
-    root_.y += m.dy;
+private:
+  void remember(Node& shape, Operation op) {
+    history_.resize(cursor_ - history_.begin());
+    history_.emplace_back(&shape, std::move(op));
+    cursor_ = history_.end();
   }
-  void do_apply(const Scale& s) {
-    for (auto& child : root_.children) {
-      std::visit([f = s.factor](auto& n) { scale(n, f); }, child);
-    }
-  }
-  void do_apply(const Rotate& r) {
-    for (auto& child : root_.children) {
-      std::visit([angle = r.angle](auto& n) { rotate(n, angle); }, child);
-    }
-  }
-
-  Compound root_;
-  std::vector<Operation> ops_;
-  std::size_t cursor_ = 0;
 };
 
 void benchmark() {
-  constexpr int kShapes = 2000;
-  constexpr int kOps = 2000;
+  constexpr int kShapes = 1000;
+  constexpr int kOps = 10000;
 
   Canvas canvas;
+  std::vector<Node*> shapes;
+  shapes.reserve(kShapes);
   for (int i = 0; i < kShapes; ++i) {
     if (i % 2 == 0) {
-      canvas.place(Circle{float(i), float(i), 0.5f});
+      shapes.push_back(&canvas.place(Circle{float(i), float(i), 0.5f}));
     } else {
-      canvas.place(Rectangle{float(i), float(i), 2.0f, 1.0f});
+      shapes.push_back(&canvas.place(Rectangle{float(i), float(i), 2.0f, 1.0f}));
     }
   }
 
   using clk = std::chrono::steady_clock;
   auto t0 = clk::now();
   for (int i = 0; i < kOps; ++i) {
+    Node& s = *shapes[i % kShapes];
     switch (i % 3) {
       case 0:
-        canvas.apply(Move{0.1f, 0.1f});
+        canvas.move(s, 0.1f, 0.1f);
         break;
       case 1:
-        canvas.apply(Scale{1.001f});
+        canvas.scale(s, 1.001f);
         break;
       case 2:
-        canvas.apply(Rotate{0.001f});
+        canvas.rotate(s, 0.001f);
         break;
     }
   }
@@ -220,22 +275,21 @@ void benchmark() {
 
 int main() {
   Canvas canvas;
-  canvas.place(Circle{1.0f, 0.0f, 0.5f});
-  canvas.place(Rectangle{-1.0f, 0.0f, 2.0f, 1.0f});
+  auto& circle = canvas.place(Circle{1.0f, 0.0f, 0.5f});
+  auto& rect = canvas.place(Rectangle{-1.0f, 0.0f, 2.0f, 1.0f});
 
-  auto inner = std::make_unique<Compound>(Compound{5.0f, 5.0f, {}});
-  inner->children.emplace_back(Circle{-1.0f, 0.0f, 1.0f});
-  inner->children.emplace_back(Rectangle{1.0f, 0.0f, 2.0f, 1.0f});
-  canvas.place(std::move(inner));
+  auto compound = std::make_unique<Compound>(5.0f, 5.0f);
+  compound->place(Circle{-1.0f, 0.0f, 1.0f});
+  compound->place(Rectangle{1.0f, 0.0f, 2.0f, 1.0f});
+  auto& sub_shape = canvas.place(std::move(compound));
 
   std::cout << "Initial:\n" << canvas;
-  canvas.apply(Move{10.0f, 10.0f});
-  std::cout << "\nAfter move(10,10):\n" << canvas;
-  canvas.apply(Scale{2.0f});
-  std::cout << "\nAfter scale(2):\n" << canvas;
-  canvas.apply(Rotate{3.14159265f / 2.0f});
-  std::cout << "\nAfter rotate(90 deg):\n" << canvas;
-
+  canvas.move(circle, 10.0f, 10.0f);
+  std::cout << "\nAfter move(circle, 10, 10):\n" << canvas;
+  canvas.scale(rect, 2.0f);
+  std::cout << "\nAfter scale(rect, 2):\n" << canvas;
+  canvas.rotate(sub_shape, 3.14159265f / 2.0f);
+  std::cout << "\nAfter rotate(sub_shape, 90 deg):\n" << canvas;
   canvas.undo();
   std::cout << "\nAfter undo:\n" << canvas;
   canvas.undo();

@@ -4,70 +4,35 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 constexpr float kPi = 3.14159265358979323846f;
 
+// Shapes
 struct Shape {
+  // Using public members for simplicity
   float x;
   float y;
-
-  struct Operation {
-    std::function<void()> forward;
-    std::function<void()> inverse;
-  };
-  std::vector<Operation> ops_;
-  std::size_t cursor_ = 0;
 
   Shape(float x, float y) : x(x), y(y) {}
 
   virtual ~Shape() = default;
 
   virtual void move(float dx, float dy) {
-    record(
-        [this, dx, dy] {
-          x += dx;
-          y += dy;
-        },
-        [this, dx, dy] {
-          x -= dx;
-          y -= dy;
-        });
+    x += dx;
+    y += dy;
   }
 
   virtual void scale(float factor) = 0;
 
   virtual void rotate(float rotation) = 0;
 
-  void undo() {
-    if (cursor_ == 0) {
-      return;
-    }
-    --cursor_;
-    ops_[cursor_].inverse();
-  }
-
-  void redo() {
-    if (cursor_ >= ops_.size()) {
-      return;
-    }
-    ops_[cursor_].forward();
-    ++cursor_;
-  }
-
-  virtual void print(std::ostream& os, const std::string& indent, float ox, float oy) const = 0;
-
- protected:
-  void record(std::function<void()> forward, std::function<void()> inverse) {
-    forward();
-    ops_.resize(cursor_);
-    ops_.push_back({std::move(forward), std::move(inverse)});
-    ++cursor_;
-  }
+  virtual void print(std::ostream& os, const std::string& indent) const = 0;
 };
 
 inline std::ostream& operator<<(std::ostream& os, const Shape& shape) {
-  shape.print(os, "", 0.0f, 0.0f);
+  shape.print(os, "");
   return os;
 }
 
@@ -77,15 +42,15 @@ struct Circle : Shape {
   Circle(float x, float y, float radius) : Shape(x, y), radius(radius) {}
 
   void scale(float factor) override {
-    record([this, factor] { radius *= factor; }, [this, factor] { radius /= factor; });
+    radius *= factor;
   }
 
-  void rotate(float) override {
-    record([] {}, [] {});
-  }
+  void rotate(float angle_rad) override {
+    (void) angle_rad;
+  };
 
-  void print(std::ostream& os, const std::string& indent, float ox, float oy) const override {
-    os << indent << "Circle(x=" << ox + x << ", y=" << oy + y << ", radius=" << radius << ")\n";
+  void print(std::ostream& os, const std::string& indent) const override {
+    os << indent << "Circle(x=" << x << ", y=" << y << ", radius=" << radius << ")\n";
   }
 };
 
@@ -98,24 +63,17 @@ struct Rectangle : Shape {
       : Shape(x, y), width(width), height(height), orientation(orientation) {}
 
   void scale(float factor) override {
-    record(
-        [this, factor] {
-          width *= factor;
-          height *= factor;
-        },
-        [this, factor] {
-          width /= factor;
-          height /= factor;
-        });
+    width *= factor;
+    height *= factor;
   }
 
   void rotate(float rotation) override {
-    record([this, rotation] { orientation = std::remainder(orientation + rotation, 2.0f * kPi); },
-           [this, rotation] { orientation = std::remainder(orientation - rotation, 2.0f * kPi); });
+    // Range is [-pi, pi]
+    orientation = std::remainder(orientation + rotation, 2.0f * kPi);
   }
 
-  void print(std::ostream& os, const std::string& indent, float ox, float oy) const override {
-    os << indent << "Rectangle(x=" << ox + x << ", y=" << oy + y << ", width=" << width << ", height=" << height
+  void print(std::ostream& os, const std::string& indent) const override {
+    os << indent << "Rectangle(x=" << x << ", y=" << y << ", width=" << width << ", height=" << height
        << ", orientation=" << orientation << ")\n";
   }
 };
@@ -125,84 +83,138 @@ struct CompoundShape : Shape {
 
   CompoundShape(float x, float y) : Shape(x, y) {}
 
-  void place(std::unique_ptr<Shape> shape) { shapes.push_back(std::move(shape)); }
+  Shape* place(std::unique_ptr<Shape> shape) {
+    shapes.push_back(std::move(shape));
+    return shapes.back().get();
+  }
 
   void scale(float factor) override {
-    record(
-        [this, factor] {
-          for (auto& s : shapes) {
-            const float dx = s->x * (factor - 1.0f);
-            const float dy = s->y * (factor - 1.0f);
-            s->move(dx, dy);
-            s->scale(factor);
-          }
-        },
-        [this] {
-          for (auto& s : shapes) {
-            s->undo();
-            s->undo();
-          }
-        });
+    // Move and scale child shapes
+    for (auto& shape : shapes) {
+      const float dx = shape->x * (factor - 1.0f);
+      const float dy = shape->y * (factor - 1.0f);
+      shape->move(dx, dy);
+      shape->scale(factor);
+    }
   }
 
   void rotate(float rotation) override {
-    record(
-        [this, rotation] {
-          const float c = std::cos(rotation);
-          const float s = std::sin(rotation);
-          for (auto& shape : shapes) {
-            const float rx = shape->x;
-            const float ry = shape->y;
-            const float nx = rx * c - ry * s;
-            const float ny = rx * s + ry * c;
-            shape->move(nx - rx, ny - ry);
-            shape->rotate(rotation);
-          }
-        },
-        [this] {
-          for (auto& s : shapes) {
-            s->undo();
-            s->undo();
-          }
-        });
+    // Move and scale child shapes
+    const float c = std::cos(rotation);
+    const float s = std::sin(rotation);
+    for (auto& shape : shapes) {
+      const float rx = shape->x;
+      const float ry = shape->y;
+      const float nx = rx * c - ry * s;
+      const float ny = rx * s + ry * c;
+      shape->move(nx - rx, ny - ry);
+      shape->rotate(rotation);
+    }
   }
 
-  void print(std::ostream& os, const std::string& indent, float ox, float oy) const override {
-    const float ax = ox + x;
-    const float ay = oy + y;
-    os << indent << "CompoundShape(x=" << ax << ", y=" << ay << ") {\n";
+  void print(std::ostream& os, const std::string& indent) const override {
+    os << indent << "CompoundShape(x=" << x << ", y=" << y << ") {\n";
     for (const auto& shape : shapes) {
-      shape->print(os, indent + "  ", ax, ay);
+      shape->print(os, indent + "  ");
     }
     os << indent << "}\n";
   }
 };
 
-void benchmark() {
-  constexpr int kShapes = 2000;
-  constexpr int kOps = 2000;
+// Canvas
+class Canvas {
 
-  CompoundShape canvas(0.0f, 0.0f);
+  using History = std::vector<std::pair<std::function<void()>, std::function<void()>>>;
+
+  // The canvas owns the shapes
+  std::vector<std::unique_ptr<Shape>> shapes_;
+
+  History history_;
+  History::iterator cursor_;
+
+public:
+  Canvas() : cursor_(history_.end()) {}
+
+  Shape& place(std::unique_ptr<Shape> shape) {
+    shapes_.push_back(std::move(shape));
+    return *shapes_.back();
+  }
+
+  void move(Shape& shape, float dx, float dy) {
+    shape.move(dx, dy);
+    remember([&shape, dx, dy] { shape.move(dx, dy); },
+             [&shape, dx, dy] { shape.move(-dx, -dy); });
+  }
+
+  void scale(Shape& shape, float factor) {
+    shape.scale(factor);
+    remember([&shape, factor] { shape.scale(factor); },
+             [&shape, factor] { shape.scale(1.0f / factor); });
+  }
+
+  void rotate(Shape& shape, float angle_rad) {
+    shape.rotate(angle_rad);
+    remember([&shape, angle_rad] { shape.rotate(angle_rad); },
+             [&shape, angle_rad] { shape.rotate(-angle_rad); });
+  }
+
+  void undo() {
+    if (cursor_ == history_.begin()) return;
+    --cursor_;
+    auto& [apply, revert] = *cursor_;
+    revert();
+  }
+
+  void redo() {
+    if (cursor_ == history_.end()) return;
+    auto& [apply, revert] = *cursor_;
+    apply();
+    ++cursor_;
+  }
+
+  friend std::ostream& operator<<(std::ostream& os, const Canvas& c) {
+    for (const auto& shape : c.shapes_) {
+      os << *shape;
+    }
+    return os;
+  }
+
+private:
+  void remember(std::function<void()> apply, std::function<void()> revert) {
+    history_.resize(cursor_ - history_.begin());
+    history_.emplace_back(std::move(apply), std::move(revert));
+    cursor_ = history_.end();
+  }
+};
+
+void benchmark() {
+  constexpr int kShapes = 1000;
+  constexpr int kOps = 10000;
+
+  Canvas canvas;
+  std::vector<Shape*> shapes;
+  shapes.reserve(kShapes);
   for (int i = 0; i < kShapes; ++i) {
     if (i % 2 == 0) {
-      canvas.place(std::make_unique<Circle>(float(i), float(i), 0.5f));
+      shapes.push_back(&canvas.place(std::make_unique<Circle>(float(i), float(i), 0.5f)));
     } else {
-      canvas.place(std::make_unique<Rectangle>(float(i), float(i), 2.0f, 1.0f));
+      shapes.push_back(&canvas.place(std::make_unique<Rectangle>(float(i), float(i), 2.0f, 1.0f)));
     }
   }
 
   using clk = std::chrono::steady_clock;
   auto t0 = clk::now();
   for (int i = 0; i < kOps; ++i) {
+    Shape& s = *shapes[i % kShapes];
     switch (i % 3) {
       case 0:
-        canvas.move(0.1f, 0.1f);
+        canvas.move(s, 0.1f, 0.1f);
         break;
       case 1:
-        canvas.scale(1.001f);
+        canvas.scale(s, 1.001f);
         break;
       case 2:
-        canvas.rotate(0.001f);
+        canvas.rotate(s, 0.001f);
         break;
     }
   }
@@ -221,22 +233,22 @@ void benchmark() {
 }
 
 int main() {
-  CompoundShape canvas(0.0f, 0.0f);
-  canvas.place(std::make_unique<Circle>(1.0f, 0.0f, 0.5f));
-  canvas.place(std::make_unique<Rectangle>(-1.0f, 0.0f, 2.0f, 1.0f));
+  Canvas canvas;
+  auto& circle = canvas.place(std::make_unique<Circle>(1.0f, 0.0f, 0.5f));
+  auto& rect = canvas.place(std::make_unique<Rectangle>(-1.0f, 0.0f, 2.0f, 1.0f));
 
   auto compound = std::make_unique<CompoundShape>(5.0f, 5.0f);
   compound->place(std::make_unique<Circle>(-1.0f, 0.0f, 1.0f));
   compound->place(std::make_unique<Rectangle>(1.0f, 0.0f, 2.0f, 1.0f));
-  canvas.place(std::move(compound));
+  auto& sub_shape = canvas.place(std::move(compound));
 
   std::cout << "Initial:\n" << canvas;
-  canvas.move(10.0f, 10.0f);
-  std::cout << "\nAfter move(10,10):\n" << canvas;
-  canvas.scale(2.0f);
-  std::cout << "\nAfter scale(2):\n" << canvas;
-  canvas.rotate(kPi / 2.0f);
-  std::cout << "\nAfter rotate(90 deg):\n" << canvas;
+  canvas.move(circle, 10.0f, 10.0f);
+  std::cout << "\nAfter move(circle, 10, 10):\n" << canvas;
+  canvas.scale(rect, 2.0f);
+  std::cout << "\nAfter scale(rect, 2):\n" << canvas;
+  canvas.rotate(sub_shape, 3.14159265f / 2.0f);
+  std::cout << "\nAfter rotate(sub_shape, 90 deg):\n" << canvas;
   canvas.undo();
   std::cout << "\nAfter undo:\n" << canvas;
   canvas.undo();
