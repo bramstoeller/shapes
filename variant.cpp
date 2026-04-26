@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -170,18 +171,16 @@ class Canvas {
 
   using History = std::vector<std::pair<Node*, Operation>>;
 
-  // The canvas owns the shapes
-  std::vector<std::unique_ptr<Node>> shapes_;
+  // Deque keeps Node references stable
+  std::deque<Node> shapes_;
 
   History history_;
-  History::iterator cursor_;
+  size_t cursor_ = 0;
 
 public:
-  Canvas() : cursor_(history_.end()) {}
-
   Node& place(Node node) {
-    shapes_.push_back(std::make_unique<Node>(std::move(node)));
-    return *shapes_.back();
+    shapes_.push_back(std::move(node));
+    return shapes_.back();
   }
 
   void move(Node& shape, float dx, float dy) {
@@ -200,31 +199,31 @@ public:
   }
 
   void undo() {
-    if (cursor_ == history_.begin()) return;
+    if (cursor_ == 0) return;
     --cursor_;
-    auto& [shape, op] = *cursor_;
+    auto& [shape, op] = history_[cursor_];
     ::revert(op, *shape);
   }
 
   void redo() {
-    if (cursor_ == history_.end()) return;
-    auto& [shape, op] = *cursor_;
+    if (cursor_ == history_.size()) return;
+    auto& [shape, op] = history_[cursor_];
     ::apply(op, *shape);
     ++cursor_;
   }
 
   friend std::ostream& operator<<(std::ostream& os, const Canvas& c) {
     for (const auto& shape : c.shapes_) {
-      os << *shape;
+      os << shape;
     }
     return os;
   }
 
 private:
   void remember(Node& shape, Operation op) {
-    history_.resize(cursor_ - history_.begin());
+    history_.resize(cursor_);
     history_.emplace_back(&shape, std::move(op));
-    cursor_ = history_.end();
+    cursor_ = history_.size();
   }
 };
 
